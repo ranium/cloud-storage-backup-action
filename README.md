@@ -30,8 +30,10 @@ See [config-template/README.md](config-template/README.md) for the steps.
 
 ## What a sync does
 
-- Copies new and changed files, comparing checksums where both sides have
-  them (sizes otherwise), so an unchanged bucket costs only listing requests.
+- Copies new and changed files, compared by size and MD5. Files uploaded in
+  one part carry their MD5 in the bucket listing, so checking them is cheap;
+  files uploaded in parts (large ones) need one extra request per side each
+  night, and where no MD5 exists only sizes are compared.
 - Propagates deletions. On a versioned destination, which `setup-bucket`
   creates, a deletion leaves the previous version in place until the bucket's
   lifecycle rules expire it (90 days by default).
@@ -40,7 +42,13 @@ See [config-template/README.md](config-template/README.md) for the steps.
 - Writes a per-bucket summary to the workflow run page.
 
 No rclone config file is written: both remotes are configured through
-environment variables for the length of the step.
+environment variables for the length of the step. No ACL is sent, so it works
+with buckets that have ACLs disabled (the AWS default, and what `setup-bucket`
+creates).
+
+On S3 Standard-IA (the AWS default here), every object is billed as at least
+128 KB for at least 30 days. A bucket of many small files (thumbnails) can cost
+more there than in S3 Standard; set `storage-class: STANDARD` for it if so.
 
 ## Inputs
 
@@ -53,7 +61,8 @@ environment variables for the length of the step.
 | `source-region` | `auto` | |
 | `destination-bucket` | — | |
 | `destination-region` | — | |
-| `destination-prefix` | `files` | The source lands in `<prefix>/<source-bucket>/`. |
+| `destination-prefix` | `files` | |
+| `destination-folder` | source bucket name | Folder under the prefix: the source lands in `<prefix>/<folder>/`. |
 | `destination-endpoint` | empty | Empty means AWS S3. |
 | `destination-provider` | `AWS` / `Other` | rclone's S3 provider name, e.g. `DigitalOcean`. |
 | `destination-access-key-id` / `destination-secret-access-key` | empty | Leave empty on AWS after `aws-actions/configure-aws-credentials` (OIDC). |
@@ -61,6 +70,8 @@ environment variables for the length of the step.
 | `max-delete` | `1000` | |
 | `transfers` | `16` | Files copied in parallel. |
 | `dry-run` | `false` | Report what would change; change nothing. |
+
+Output: `max-delete-reached` is `"true"` when a run stopped at `max-delete`.
 
 ## Example
 

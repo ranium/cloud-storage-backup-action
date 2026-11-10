@@ -30,7 +30,11 @@ jobs:
           echo "one" > "${S3_ROOT}/source/a.txt"
           echo "two" > "${S3_ROOT}/source/invoices/b.pdf"
           echo "three" > "${S3_ROOT}/source/invoices/c.pdf"
-          rclone serve s3 "${S3_ROOT}" --addr 127.0.0.1:8080 --auth-key "${KEY},${SECRET}" --vfs-cache-mode writes &
+          # No directory cache and no write cache: the steps below change files
+          # on disk between syncs and read results straight from disk, so the
+          # server must neither serve stale listings nor delay writes.
+          rclone serve s3 "${S3_ROOT}" --addr 127.0.0.1:8080 --auth-key "${KEY},${SECRET}" \
+            --dir-cache-time 0s --vfs-cache-mode off &
           for i in $(seq 1 30); do curl -s -o /dev/null http://127.0.0.1:8080 && break; sleep 1; done
 
       - name: First sync copies everything
@@ -110,7 +114,11 @@ jobs:
       - name: Check the guard held
         env:
           OUTCOME: ${{ steps.guarded.outcome }}
+          REACHED: ${{ steps.guarded.outputs.max-delete-reached }}
         run: |
+          # Failing is not enough: it must have failed because of max-delete.
           test "${OUTCOME}" = "failure"
+          test "${REACHED}" = "true"
+          test -e "${S3_ROOT}/backup/files/source/keep.txt"
           test -e "${S3_ROOT}/backup/files/source/a.txt"
           test -e "${S3_ROOT}/backup/files/source/invoices/c.pdf"

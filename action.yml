@@ -29,8 +29,14 @@ inputs:
     description: Backup bucket to mirror into.
     required: true
   destination-prefix:
-    description: Folder in the backup bucket; the source lands in <prefix>/<source-bucket>/.
+    description: Folder in the backup bucket; the source lands in <prefix>/<destination-folder>/.
     default: files
+  destination-folder:
+    description: >-
+      Name of this bucket's folder under the prefix. Defaults to the source
+      bucket's name; set a readable one when bucket names are opaque IDs
+      (Laravel Cloud's are "fls-...").
+    default: ""
   destination-region:
     description: Region of the backup bucket, e.g. ap-south-1.
     required: true
@@ -62,6 +68,11 @@ inputs:
     description: Show what would change without copying or deleting anything.
     default: "false"
 
+outputs:
+  max-delete-reached:
+    description: '"true" when the run stopped because it hit max-delete.'
+    value: ${{ steps.sync.outputs.max-delete-reached }}
+
 runs:
   using: composite
   steps:
@@ -69,7 +80,8 @@ runs:
       shell: bash
       run: '"${GITHUB_ACTION_PATH}/bin/install-rclone"'
 
-    - name: Sync ${{ inputs.source-bucket }}
+    - name: Sync ${{ inputs.destination-folder || inputs.source-bucket }}
+      id: sync
       shell: bash
       run: '"${GITHUB_ACTION_PATH}/bin/sync"'
       env:
@@ -81,6 +93,7 @@ runs:
         SOURCE_REGION: ${{ inputs.source-region }}
         DESTINATION_BUCKET: ${{ inputs.destination-bucket }}
         DESTINATION_PREFIX: ${{ inputs.destination-prefix }}
+        DESTINATION_FOLDER: ${{ inputs.destination-folder }}
         DESTINATION_REGION: ${{ inputs.destination-region }}
         DESTINATION_ENDPOINT: ${{ inputs.destination-endpoint }}
         DESTINATION_PROVIDER: ${{ inputs.destination-provider }}

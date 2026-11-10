@@ -39,6 +39,10 @@ jobs:
           invalid="$(jq -r '[.[] | select((.name // "") == "" or (.endpoint // "") == "" or (.secret // "") == "") | (.name // "(unnamed)")] | join(", ")' <<<"${buckets}")"
           [ -z "${invalid}" ] || { echo "::error::these buckets need name, endpoint and secret: ${invalid}"; exit 1; }
 
+          # Two buckets mirrored into one folder would delete each other's files every night.
+          duplicates="$(jq -r '[group_by(.folder // .name)[] | select(length > 1) | (.[0].folder // .[0].name)] | join(", ")' <<<"${buckets}")"
+          [ -z "${duplicates}" ] || { echo "::error::more than one bucket mirrors into: ${duplicates}. Give each a unique folder."; exit 1; }
+
           # Fill in the defaults once, here, so every job sees the same values.
           destination="$(yq -o=json -I=0 '.destination' buckets.yml | jq -c '
             (.endpoint // "") as $endpoint
@@ -52,12 +56,19 @@ jobs:
                 auth: (if $endpoint == "" then "aws-oidc" else "keys" end)
               }')"
 
+          # On AWS the sync role may only write under files/.
+          prefix="$(jq -r .prefix <<<"${destination}")"
+          if [ "$(jq -r .auth <<<"${destination}")" = "aws-oidc" ] && [ "${prefix}" != "files" ] && [ "${prefix#files/}" = "${prefix}" ]; then
+            echo "::error::destination.prefix must be \"files\" (or under files/) on AWS: the sync role can only write there."
+            exit 1
+          fi
+
           echo "buckets=${buckets}" >>"${GITHUB_OUTPUT}"
           echo "destination=${destination}" >>"${GITHUB_OUTPUT}"
           echo "Mirroring ${count} bucket(s) into $(jq -r .bucket <<<"${destination}") ($(jq -r .auth <<<"${destination}"))."
 
   sync:
-    name: ${{ matrix.bucket.name }}
+    name: ${{ matrix.bucket.folder || matrix.bucket.name }}
     needs: plan
     runs-on: ubuntu-latest
     timeout-minutes: 360
@@ -82,6 +93,7 @@ jobs:
           source-bucket: ${{ matrix.bucket.name }}
           source-endpoint: ${{ matrix.bucket.endpoint }}
           source-provider: ${{ matrix.bucket.provider || 'Cloudflare' }}
+          source-region: ${{ matrix.bucket.region || 'auto' }}
           source-access-key-id: ${{ secrets[format('{0}_ACCESS_KEY_ID', matrix.bucket.secret)] }}
           source-secret-access-key: ${{ secrets[format('{0}_SECRET_ACCESS_KEY', matrix.bucket.secret)] }}
           destination-bucket: ${{ fromJSON(needs.plan.outputs.destination).bucket }}
@@ -89,6 +101,7 @@ jobs:
           destination-endpoint: ${{ fromJSON(needs.plan.outputs.destination).endpoint }}
           destination-provider: ${{ fromJSON(needs.plan.outputs.destination).provider }}
           destination-prefix: ${{ fromJSON(needs.plan.outputs.destination).prefix }}
+          destination-folder: ${{ matrix.bucket.folder }}
           destination-access-key-id: ${{ secrets.DESTINATION_ACCESS_KEY_ID }}
           destination-secret-access-key: ${{ secrets.DESTINATION_SECRET_ACCESS_KEY }}
           storage-class: ${{ fromJSON(needs.plan.outputs.destination).storage_class }}

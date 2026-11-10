@@ -37,9 +37,11 @@ Variables). Re-run it whenever you change `stack.json`.
 
 ## 2. Storage buckets
 
-List them in [`buckets.yml`](buckets.yml). For each one, create a **read-only**
-access key limited to that bucket and add two repository **secrets** named
-after its `secret` value:
+List them in [`buckets.yml`](buckets.yml). On Laravel Cloud a bucket's real
+name is its `fls-...` id, not the label shown in the dashboard: take it from
+`cloud bucket:list`, and give it a readable `folder`. For each one, create a
+**read-only** access key limited to that bucket and add two repository
+**secrets** named after its `secret` value:
 
 ```
 <SECRET>_ACCESS_KEY_ID
@@ -56,7 +58,16 @@ nothing is sent.
 ## 3. Check it
 
 Actions → **Sync storage** → **Run workflow**, with *dry run* ticked first.
-Each bucket's job shows what it copied or would copy.
+Each bucket's job shows what it copied or would copy. A dry run only lists, so
+also run one real sync before relying on it.
+
+Run it from the `main` branch: on AWS the sign-in role only trusts workflows
+running on `main` (`github_branch` in `stack.json`), and jobs that use a GitHub
+`environment:` are not trusted either.
+
+Runs never overlap. If one is still going when the next is due, the next
+waits; GitHub keeps at most one waiting run, so a third is dropped, which a
+healthcheck will report as missing.
 
 ## 4. Databases
 

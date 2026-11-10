@@ -11,6 +11,11 @@ RCLONE_VERSION="v1.75.2"
 SHA256_AMD64="349ac8fba6ff65d6247043f1750cdcb518ec5d500ef91463a10d37c0ccdf3702"
 SHA256_ARM64="7e1e8d69654941b7b7df84ee74c5f7fb09cce7d5496947fb7bf16b55ff427d10"
 
+if [ "${RUNNER_OS:-Linux}" != "Linux" ]; then
+    echo "install-rclone: this action runs on Linux runners only (got ${RUNNER_OS})" >&2
+    exit 1
+fi
+
 case "${RUNNER_ARCH:-X64}" in
     X64) arch=amd64; sha="${SHA256_AMD64}" ;;
     ARM64) arch=arm64; sha="${SHA256_ARM64}" ;;

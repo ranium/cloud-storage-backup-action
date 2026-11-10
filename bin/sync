@@ -1,12 +1,14 @@
 #!/usr/bin/env bash
 #
-# Mirrors SOURCE_BUCKET into DESTINATION_BUCKET/DESTINATION_PREFIX/SOURCE_BUCKET.
+# Mirrors SOURCE_BUCKET into DESTINATION_BUCKET/DESTINATION_PREFIX/DESTINATION_FOLDER
+# (the folder defaults to the source bucket's name).
 #
 # Remotes are configured entirely through RCLONE_CONFIG_* environment
 # variables, so no rclone config file (and no secret) is ever written to disk.
 #
-# Files are compared by checksum where both sides have one (size otherwise),
-# which needs no extra request per object. Deletions in the source are
+# Files are compared by size and checksum. Objects uploaded in one part carry
+# their MD5 in the listing; multipart objects need a HEAD per side, and when
+# no MD5 is available rclone compares sizes only. Deletions in the source are
 # propagated; on a versioned destination they become delete markers and the
 # previous version is kept until the bucket's lifecycle rules expire it.
 
@@ -24,11 +26,13 @@ require() {
 
 require SOURCE_BUCKET SOURCE_ENDPOINT SOURCE_ACCESS_KEY_ID SOURCE_SECRET_ACCESS_KEY DESTINATION_BUCKET DESTINATION_REGION
 
-for number in "${MAX_DELETE:=1000}" "${TRANSFERS:=16}"; do
-    case "${number}" in
-        '' | *[!0-9]*) echo "sync: max-delete and transfers must be whole numbers (got \"${number}\")" >&2; exit 2 ;;
-    esac
-done
+case "${MAX_DELETE:=1000}" in
+    '' | *[!0-9]*) echo "sync: max-delete must be a whole number (got \"${MAX_DELETE}\")" >&2; exit 2 ;;
+esac
+
+case "${TRANSFERS:=16}" in
+    '' | *[!0-9]* | 0) echo "sync: transfers must be a whole number of at least 1 (got \"${TRANSFERS}\")" >&2; exit 2 ;;
+esac
 
 export RCLONE_CONFIG_SOURCE_TYPE=s3
 export RCLONE_CONFIG_SOURCE_PROVIDER="${SOURCE_PROVIDER:-Cloudflare}"
@@ -65,7 +69,10 @@ fi
 prefix="${DESTINATION_PREFIX-files}"
 prefix="${prefix#/}"
 prefix="${prefix%/}"
-target="destination:${DESTINATION_BUCKET}/${prefix:+${prefix}/}${SOURCE_BUCKET}"
+folder="${DESTINATION_FOLDER:-${SOURCE_BUCKET}}"
+folder="${folder#/}"
+folder="${folder%/}"
+target="destination:${DESTINATION_BUCKET}/${prefix:+${prefix}/}${folder}"
 
 args=(
     sync "source:${SOURCE_BUCKET}" "${target}"
@@ -74,10 +81,13 @@ args=(
     --transfers "${TRANSFERS}"
     --checkers "$((TRANSFERS * 2))"
     --max-delete "${MAX_DELETE}"
+    # No ACL header: the AWS bucket has ACLs disabled (bucket owner enforced)
+    # and the sync role has no s3:PutObjectAcl. rclone sends none for an
+    # empty ACL.
+    --s3-acl ""
     --retries 5
     --low-level-retries 20
     --stats 60s
-    --stats-one-line
     --stats-log-level NOTICE
 )
 
@@ -95,20 +105,39 @@ rclone "${args[@]}" 2>&1 | tee "${log}"
 status="${PIPESTATUS[0]}"
 set -e
 
+max_delete_reached=false
+if grep -qE -- '--max-delete(-size)? threshold reached' "${log}"; then
+    max_delete_reached=true
+fi
+
+if [ -n "${GITHUB_OUTPUT:-}" ]; then
+    echo "max-delete-reached=${max_delete_reached}" >>"${GITHUB_OUTPUT}"
+fi
+
+# The last value rclone reported for a stats line, e.g. "Deleted:".
+last_stat() {
+    grep -E "^\s*(.*NOTICE: *)?$1" "${log}" | tail -1 | sed -E "s/^.*$1[[:space:]]*//" || true
+}
+
 if [ -n "${GITHUB_STEP_SUMMARY:-}" ]; then
     {
-        echo "### ${SOURCE_BUCKET}"
+        echo "### ${folder}"
         echo
         echo "| | |"
         echo "|---|---|"
+        echo "| Source | \`${SOURCE_BUCKET}\` |"
         echo "| Destination | \`${target#destination:}\` |"
         echo "| Result | $([ "${status}" -eq 0 ] && echo "✅ synced" || echo "❌ failed (exit ${status})") |"
         if [ "${DRY_RUN:-false}" = "true" ]; then
             echo "| Mode | dry run: nothing was changed |"
         fi
-        stats="$(grep -E 'Transferred:|Checks:|Deleted:|Errors:' "${log}" | tail -1 | sed 's/^.*NOTICE: *//' || true)"
-        [ -n "${stats}" ] && echo "| Last stats | ${stats} |"
-        if grep -qE -- '--max-delete(-size)? threshold reached' "${log}"; then
+        for label in Transferred: Checks: Deleted: Errors:; do
+            value="$(last_stat "${label}")"
+            if [ -n "${value}" ]; then
+                echo "| ${label%:} | ${value} |"
+            fi
+        done
+        if [ "${max_delete_reached}" = "true" ]; then
             echo
             echo "**Stopped at ${MAX_DELETE} deletions.** The source may have been emptied by mistake; check it before raising \`max-delete\`."
         fi

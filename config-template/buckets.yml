@@ -20,7 +20,15 @@ destination:
   # storage_class: STANDARD_IA
 
 buckets:
-  - name: example_production_private
+  # name:     the bucket's real name. On Laravel Cloud that is the "fls-..." id
+  #           (`cloud bucket:list`), which is also the app's AWS_BUCKET.
+  # folder:   optional readable folder for it under the prefix; defaults to name.
+  #           Must be unique across this list.
+  # endpoint: the source's S3 endpoint (`cloud bucket:get <name>`).
+  # secret:   prefix of this bucket's two GitHub secrets.
+  - name: fls-00000000-0000-0000-0000-000000000000
+    folder: example_production_private
     endpoint: https://<account-id>.r2.cloudflarestorage.com
     secret: EXAMPLE_PRODUCTION_PRIVATE
     # provider: Cloudflare   # default; rclone's S3 provider name
+    # region: auto           # default; set for non-R2 sources
