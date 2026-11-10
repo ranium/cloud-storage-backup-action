@@ -1,0 +1,70 @@
+# Offsite backups: configuration
+
+This private repository holds this organization's backup settings. The code
+lives in two public repositories:
+
+- [ranium/cloud-db-backup](https://github.com/ranium/cloud-db-backup): the
+  database backup app on Laravel Cloud, and the bucket setup.
+- [ranium/cloud-storage-backup-action](https://github.com/ranium/cloud-storage-backup-action):
+  the storage sync this repository's workflow runs.
+
+Nothing in this repository is secret. Keys live in GitHub secrets and in each
+Laravel Cloud environment's variables.
+
+## 1. The backup bucket
+
+Edit [`aws/stack.json`](aws/stack.json):
+
+| Field | |
+|---|---|
+| `provider` | `aws`, or `s3-compatible` for DigitalOcean Spaces, Backblaze B2, MinIO, ... |
+| `region`, `bucket` | Where backups go. |
+| `endpoint` | `s3-compatible` only. |
+| `retention` | Days to keep daily dumps (35), monthly dumps (365) and previous file versions (90). |
+| `github_repository` | `aws` only: this repository, as `owner/repo`. |
+
+Then:
+
+```bash
+aws/deploy.sh --plan   # what would change
+aws/deploy.sh          # apply
+```
+
+It prints the next steps. On AWS that is: create the database uploader's
+access key, and set the printed `StorageSyncRoleArn` as this repository's
+`AWS_ROLE_ARN` **variable** (Settings → Secrets and variables → Actions →
+Variables). Re-run it whenever you change `stack.json`.
+
+## 2. Storage buckets
+
+List them in [`buckets.yml`](buckets.yml). For each one, create a **read-only**
+access key limited to that bucket and add two repository **secrets** named
+after its `secret` value:
+
+```
+<SECRET>_ACCESS_KEY_ID
+<SECRET>_SECRET_ACCESS_KEY
+```
+
+For a destination that is not AWS, also add `DESTINATION_ACCESS_KEY_ID` and
+`DESTINATION_SECRET_ACCESS_KEY`.
+
+Optional: a `HEALTHCHECK_URL` secret (a healthchecks.io ping URL) gets a ping
+after every nightly run, or a failure ping if any bucket failed. Without it,
+nothing is sent.
+
+## 3. Check it
+
+Actions → **Sync storage** → **Run workflow**, with *dry run* ticked first.
+Each bucket's job shows what it copied or would copy.
+
+## 4. Databases
+
+Deploy [cloud-db-backup](https://github.com/ranium/cloud-db-backup) on
+Laravel Cloud once per region that has database clusters, pointing it at the
+same bucket. Its README lists the variables.
+
+## Restoring
+
+- Databases: [cloud-db-backup/RESTORE.md](https://github.com/ranium/cloud-db-backup/blob/main/RESTORE.md)
+- Files: [cloud-storage-backup-action/README.md](https://github.com/ranium/cloud-storage-backup-action#restoring-files)

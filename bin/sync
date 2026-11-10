@@ -1,0 +1,119 @@
+#!/usr/bin/env bash
+#
+# Mirrors SOURCE_BUCKET into DESTINATION_BUCKET/DESTINATION_PREFIX/SOURCE_BUCKET.
+#
+# Remotes are configured entirely through RCLONE_CONFIG_* environment
+# variables, so no rclone config file (and no secret) is ever written to disk.
+#
+# Files are compared by checksum where both sides have one (size otherwise),
+# which needs no extra request per object. Deletions in the source are
+# propagated; on a versioned destination they become delete markers and the
+# previous version is kept until the bucket's lifecycle rules expire it.
+
+set -euo pipefail
+
+require() {
+    local name
+    for name in "$@"; do
+        if [ -z "${!name:-}" ]; then
+            echo "sync: ${name} is required" >&2
+            exit 2
+        fi
+    done
+}
+
+require SOURCE_BUCKET SOURCE_ENDPOINT SOURCE_ACCESS_KEY_ID SOURCE_SECRET_ACCESS_KEY DESTINATION_BUCKET DESTINATION_REGION
+
+for number in "${MAX_DELETE:=1000}" "${TRANSFERS:=16}"; do
+    case "${number}" in
+        '' | *[!0-9]*) echo "sync: max-delete and transfers must be whole numbers (got \"${number}\")" >&2; exit 2 ;;
+    esac
+done
+
+export RCLONE_CONFIG_SOURCE_TYPE=s3
+export RCLONE_CONFIG_SOURCE_PROVIDER="${SOURCE_PROVIDER:-Cloudflare}"
+export RCLONE_CONFIG_SOURCE_ENDPOINT="${SOURCE_ENDPOINT}"
+export RCLONE_CONFIG_SOURCE_REGION="${SOURCE_REGION:-auto}"
+export RCLONE_CONFIG_SOURCE_ACCESS_KEY_ID="${SOURCE_ACCESS_KEY_ID}"
+export RCLONE_CONFIG_SOURCE_SECRET_ACCESS_KEY="${SOURCE_SECRET_ACCESS_KEY}"
+
+export RCLONE_CONFIG_DESTINATION_TYPE=s3
+export RCLONE_CONFIG_DESTINATION_REGION="${DESTINATION_REGION}"
+# The sync role can neither list all buckets nor create one.
+export RCLONE_CONFIG_DESTINATION_NO_CHECK_BUCKET=true
+
+if [ -n "${DESTINATION_ENDPOINT:-}" ]; then
+    export RCLONE_CONFIG_DESTINATION_PROVIDER="${DESTINATION_PROVIDER:-Other}"
+    export RCLONE_CONFIG_DESTINATION_ENDPOINT="${DESTINATION_ENDPOINT}"
+else
+    export RCLONE_CONFIG_DESTINATION_PROVIDER="${DESTINATION_PROVIDER:-AWS}"
+fi
+
+if [ -n "${DESTINATION_ACCESS_KEY_ID:-}" ]; then
+    require DESTINATION_SECRET_ACCESS_KEY
+    export RCLONE_CONFIG_DESTINATION_ACCESS_KEY_ID="${DESTINATION_ACCESS_KEY_ID}"
+    export RCLONE_CONFIG_DESTINATION_SECRET_ACCESS_KEY="${DESTINATION_SECRET_ACCESS_KEY}"
+else
+    # Credentials from the environment: aws-actions/configure-aws-credentials.
+    export RCLONE_CONFIG_DESTINATION_ENV_AUTH=true
+fi
+
+if [ -n "${STORAGE_CLASS:-}" ]; then
+    export RCLONE_CONFIG_DESTINATION_STORAGE_CLASS="${STORAGE_CLASS}"
+fi
+
+prefix="${DESTINATION_PREFIX-files}"
+prefix="${prefix#/}"
+prefix="${prefix%/}"
+target="destination:${DESTINATION_BUCKET}/${prefix:+${prefix}/}${SOURCE_BUCKET}"
+
+args=(
+    sync "source:${SOURCE_BUCKET}" "${target}"
+    --checksum
+    --fast-list
+    --transfers "${TRANSFERS}"
+    --checkers "$((TRANSFERS * 2))"
+    --max-delete "${MAX_DELETE}"
+    --retries 5
+    --low-level-retries 20
+    --stats 60s
+    --stats-one-line
+    --stats-log-level NOTICE
+)
+
+if [ "${DRY_RUN:-false}" = "true" ]; then
+    args+=(--dry-run)
+fi
+
+echo "Syncing s3://${SOURCE_BUCKET} -> ${target#destination:}"
+
+log="$(mktemp)"
+trap 'rm -f "${log}"' EXIT
+
+set +e
+rclone "${args[@]}" 2>&1 | tee "${log}"
+status="${PIPESTATUS[0]}"
+set -e
+
+if [ -n "${GITHUB_STEP_SUMMARY:-}" ]; then
+    {
+        echo "### ${SOURCE_BUCKET}"
+        echo
+        echo "| | |"
+        echo "|---|---|"
+        echo "| Destination | \`${target#destination:}\` |"
+        echo "| Result | $([ "${status}" -eq 0 ] && echo "✅ synced" || echo "❌ failed (exit ${status})") |"
+        if [ "${DRY_RUN:-false}" = "true" ]; then
+            echo "| Mode | dry run: nothing was changed |"
+        fi
+        stats="$(grep -E 'Transferred:|Checks:|Deleted:|Errors:' "${log}" | tail -1 | sed 's/^.*NOTICE: *//' || true)"
+        [ -n "${stats}" ] && echo "| Last stats | ${stats} |"
+        if grep -qE -- '--max-delete(-size)? threshold reached' "${log}"; then
+            echo
+            echo "**Stopped at ${MAX_DELETE} deletions.** The source may have been emptied by mistake; check it before raising \`max-delete\`."
+        fi
+        echo
+    } >>"${GITHUB_STEP_SUMMARY}"
+fi
+
+exit "${status}"

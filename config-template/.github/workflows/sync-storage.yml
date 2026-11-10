@@ -1,0 +1,117 @@
+name: Sync storage
+
+on:
+  schedule:
+    - cron: "30 21 * * *" # 03:00 IST
+  workflow_dispatch:
+    inputs:
+      dry-run:
+        description: Show what would change without copying or deleting anything
+        type: boolean
+        default: false
+
+# Never run two syncs at once; a scheduled run waits for a manual one.
+concurrency:
+  group: sync-storage
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+  id-token: write # GitHub OIDC sign-in to AWS
+
+jobs:
+  plan:
+    name: Read buckets.yml
+    runs-on: ubuntu-latest
+    outputs:
+      buckets: ${{ steps.read.outputs.buckets }}
+      destination: ${{ steps.read.outputs.destination }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      # yq ships on GitHub's Ubuntu runners.
+      - id: read
+        run: |
+          buckets="$(yq -o=json -I=0 '.buckets // []' buckets.yml)"
+          count="$(jq 'length' <<<"${buckets}")"
+          [ "${count}" -gt 0 ] || { echo "::error::buckets.yml lists no buckets"; exit 1; }
+
+          invalid="$(jq -r '[.[] | select((.name // "") == "" or (.endpoint // "") == "" or (.secret // "") == "") | (.name // "(unnamed)")] | join(", ")' <<<"${buckets}")"
+          [ -z "${invalid}" ] || { echo "::error::these buckets need name, endpoint and secret: ${invalid}"; exit 1; }
+
+          # Fill in the defaults once, here, so every job sees the same values.
+          destination="$(yq -o=json -I=0 '.destination' buckets.yml | jq -c '
+            (.endpoint // "") as $endpoint
+            | {
+                bucket: (.bucket // error("destination.bucket is required")),
+                region: (.region // error("destination.region is required")),
+                endpoint: $endpoint,
+                provider: (.provider // ""),
+                prefix: (.prefix // "files"),
+                storage_class: (if has("storage_class") then (.storage_class // "") elif $endpoint == "" then "STANDARD_IA" else "" end),
+                auth: (if $endpoint == "" then "aws-oidc" else "keys" end)
+              }')"
+
+          echo "buckets=${buckets}" >>"${GITHUB_OUTPUT}"
+          echo "destination=${destination}" >>"${GITHUB_OUTPUT}"
+          echo "Mirroring ${count} bucket(s) into $(jq -r .bucket <<<"${destination}") ($(jq -r .auth <<<"${destination}"))."
+
+  sync:
+    name: ${{ matrix.bucket.name }}
+    needs: plan
+    runs-on: ubuntu-latest
+    timeout-minutes: 360
+    strategy:
+      fail-fast: false # one bucket failing never cancels the others
+      max-parallel: 4
+      matrix:
+        bucket: ${{ fromJSON(needs.plan.outputs.buckets) }}
+    env:
+      DESTINATION: ${{ needs.plan.outputs.destination }}
+    steps:
+      - name: Sign in to AWS
+        if: fromJSON(needs.plan.outputs.destination).auth == 'aws-oidc'
+        uses: aws-actions/configure-aws-credentials@e1253824e5c10ff9df46874f81ed3ec929e19cfd # v6.3.0
+        with:
+          role-to-assume: ${{ vars.AWS_ROLE_ARN }}
+          aws-region: ${{ fromJSON(needs.plan.outputs.destination).region }}
+          role-duration-seconds: 21600
+
+      - uses: ranium/cloud-storage-backup-action@v1
+        with:
+          source-bucket: ${{ matrix.bucket.name }}
+          source-endpoint: ${{ matrix.bucket.endpoint }}
+          source-provider: ${{ matrix.bucket.provider || 'Cloudflare' }}
+          source-access-key-id: ${{ secrets[format('{0}_ACCESS_KEY_ID', matrix.bucket.secret)] }}
+          source-secret-access-key: ${{ secrets[format('{0}_SECRET_ACCESS_KEY', matrix.bucket.secret)] }}
+          destination-bucket: ${{ fromJSON(needs.plan.outputs.destination).bucket }}
+          destination-region: ${{ fromJSON(needs.plan.outputs.destination).region }}
+          destination-endpoint: ${{ fromJSON(needs.plan.outputs.destination).endpoint }}
+          destination-provider: ${{ fromJSON(needs.plan.outputs.destination).provider }}
+          destination-prefix: ${{ fromJSON(needs.plan.outputs.destination).prefix }}
+          destination-access-key-id: ${{ secrets.DESTINATION_ACCESS_KEY_ID }}
+          destination-secret-access-key: ${{ secrets.DESTINATION_SECRET_ACCESS_KEY }}
+          storage-class: ${{ fromJSON(needs.plan.outputs.destination).storage_class }}
+          dry-run: ${{ inputs.dry-run || false }}
+
+  report:
+    name: Report
+    needs: sync
+    if: always() && !inputs.dry-run
+    runs-on: ubuntu-latest
+    steps:
+      # Optional: with no HEALTHCHECK_URL secret, nothing is sent.
+      - name: Ping healthchecks.io
+        env:
+          URL: ${{ secrets.HEALTHCHECK_URL }}
+          RESULT: ${{ needs.sync.result }}
+        run: |
+          if [ -z "${URL}" ]; then
+            echo "No HEALTHCHECK_URL secret; skipping."
+            exit 0
+          fi
+          if [ "${RESULT}" = "success" ]; then
+            curl -fsS -m 10 --retry 3 -o /dev/null "${URL}"
+          else
+            curl -fsS -m 10 --retry 3 -o /dev/null "${URL}/fail"
+          fi

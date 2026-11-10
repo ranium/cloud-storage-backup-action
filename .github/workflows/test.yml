@@ -1,0 +1,116 @@
+name: Test
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    env:
+      S3_ROOT: ${{ github.workspace }}/../s3
+      KEY: test-key
+      SECRET: test-secret
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Install rclone
+        run: ./bin/install-rclone
+
+      # A throwaway S3 server: every top-level directory under S3_ROOT is a bucket.
+      - name: Start a local S3 server
+        run: |
+          mkdir -p "${S3_ROOT}/source/invoices" "${S3_ROOT}/backup"
+          echo "one" > "${S3_ROOT}/source/a.txt"
+          echo "two" > "${S3_ROOT}/source/invoices/b.pdf"
+          echo "three" > "${S3_ROOT}/source/invoices/c.pdf"
+          rclone serve s3 "${S3_ROOT}" --addr 127.0.0.1:8080 --auth-key "${KEY},${SECRET}" --vfs-cache-mode writes &
+          for i in $(seq 1 30); do curl -s -o /dev/null http://127.0.0.1:8080 && break; sleep 1; done
+
+      - name: First sync copies everything
+        uses: ./
+        with:
+          source-bucket: source
+          source-endpoint: http://127.0.0.1:8080
+          source-provider: Rclone
+          source-region: us-east-1
+          source-access-key-id: ${{ env.KEY }}
+          source-secret-access-key: ${{ env.SECRET }}
+          destination-bucket: backup
+          destination-endpoint: http://127.0.0.1:8080
+          destination-provider: Rclone
+          destination-region: us-east-1
+          destination-access-key-id: ${{ env.KEY }}
+          destination-secret-access-key: ${{ env.SECRET }}
+          storage-class: ""
+
+      - name: Check the mirror
+        run: |
+          test "$(cat "${S3_ROOT}/backup/files/source/a.txt")" = "one"
+          test "$(cat "${S3_ROOT}/backup/files/source/invoices/b.pdf")" = "two"
+          test "$(cat "${S3_ROOT}/backup/files/source/invoices/c.pdf")" = "three"
+
+      - name: Change and delete in the source
+        run: |
+          echo "one, edited" > "${S3_ROOT}/source/a.txt"
+          rm "${S3_ROOT}/source/invoices/b.pdf"
+
+      - name: Second sync propagates both
+        uses: ./
+        with:
+          source-bucket: source
+          source-endpoint: http://127.0.0.1:8080
+          source-provider: Rclone
+          source-region: us-east-1
+          source-access-key-id: ${{ env.KEY }}
+          source-secret-access-key: ${{ env.SECRET }}
+          destination-bucket: backup
+          destination-endpoint: http://127.0.0.1:8080
+          destination-provider: Rclone
+          destination-region: us-east-1
+          destination-access-key-id: ${{ env.KEY }}
+          destination-secret-access-key: ${{ env.SECRET }}
+          storage-class: ""
+
+      - name: Check the change and the deletion
+        run: |
+          test "$(cat "${S3_ROOT}/backup/files/source/a.txt")" = "one, edited"
+          test ! -e "${S3_ROOT}/backup/files/source/invoices/b.pdf"
+          test -e "${S3_ROOT}/backup/files/source/invoices/c.pdf"
+
+      - name: Empty the source
+        run: rm -rf "${S3_ROOT}/source/"* && echo "keep" > "${S3_ROOT}/source/keep.txt"
+
+      - name: A mass deletion stops at max-delete
+        id: guarded
+        continue-on-error: true
+        uses: ./
+        with:
+          source-bucket: source
+          source-endpoint: http://127.0.0.1:8080
+          source-provider: Rclone
+          source-region: us-east-1
+          source-access-key-id: ${{ env.KEY }}
+          source-secret-access-key: ${{ env.SECRET }}
+          destination-bucket: backup
+          destination-endpoint: http://127.0.0.1:8080
+          destination-provider: Rclone
+          destination-region: us-east-1
+          destination-access-key-id: ${{ env.KEY }}
+          destination-secret-access-key: ${{ env.SECRET }}
+          storage-class: ""
+          max-delete: "0"
+
+      - name: Check the guard held
+        env:
+          OUTCOME: ${{ steps.guarded.outcome }}
+        run: |
+          test "${OUTCOME}" = "failure"
+          test -e "${S3_ROOT}/backup/files/source/a.txt"
+          test -e "${S3_ROOT}/backup/files/source/invoices/c.pdf"

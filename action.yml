@@ -1,0 +1,92 @@
+name: Cloud storage backup
+description: Mirror one S3-compatible bucket (e.g. a Laravel Cloud / Cloudflare R2 bucket) into an offsite backup bucket with rclone.
+author: Ranium Systems
+branding:
+  icon: hard-drive
+  color: blue
+
+inputs:
+  source-bucket:
+    description: Bucket to back up.
+    required: true
+  source-endpoint:
+    description: S3 endpoint of the source, e.g. https://<account>.r2.cloudflarestorage.com.
+    required: true
+  source-access-key-id:
+    description: Read-only access key for the source bucket.
+    required: true
+  source-secret-access-key:
+    description: Secret for the source access key.
+    required: true
+  source-provider:
+    description: rclone S3 provider name for the source (Cloudflare, DigitalOcean, AWS, Other, ...).
+    default: Cloudflare
+  source-region:
+    description: Region of the source. R2 uses "auto".
+    default: auto
+
+  destination-bucket:
+    description: Backup bucket to mirror into.
+    required: true
+  destination-prefix:
+    description: Folder in the backup bucket; the source lands in <prefix>/<source-bucket>/.
+    default: files
+  destination-region:
+    description: Region of the backup bucket, e.g. ap-south-1.
+    required: true
+  destination-endpoint:
+    description: S3 endpoint of the backup bucket. Leave empty for AWS S3.
+    default: ""
+  destination-provider:
+    description: rclone S3 provider name. Defaults to AWS without an endpoint, Other with one.
+    default: ""
+  destination-access-key-id:
+    description: >-
+      Access key for the backup bucket. Leave empty on AWS when the job has
+      signed in with aws-actions/configure-aws-credentials (OIDC).
+    default: ""
+  destination-secret-access-key:
+    description: Secret for the destination access key.
+    default: ""
+  storage-class:
+    description: Storage class for new objects. Empty sends none (needed for providers without storage classes).
+    default: STANDARD_IA
+
+  max-delete:
+    description: Abort deletions past this many in one run, so an emptied source cannot wipe the mirror.
+    default: "1000"
+  transfers:
+    description: Files copied in parallel.
+    default: "16"
+  dry-run:
+    description: Show what would change without copying or deleting anything.
+    default: "false"
+
+runs:
+  using: composite
+  steps:
+    - name: Install rclone
+      shell: bash
+      run: '"${GITHUB_ACTION_PATH}/bin/install-rclone"'
+
+    - name: Sync ${{ inputs.source-bucket }}
+      shell: bash
+      run: '"${GITHUB_ACTION_PATH}/bin/sync"'
+      env:
+        SOURCE_BUCKET: ${{ inputs.source-bucket }}
+        SOURCE_ENDPOINT: ${{ inputs.source-endpoint }}
+        SOURCE_ACCESS_KEY_ID: ${{ inputs.source-access-key-id }}
+        SOURCE_SECRET_ACCESS_KEY: ${{ inputs.source-secret-access-key }}
+        SOURCE_PROVIDER: ${{ inputs.source-provider }}
+        SOURCE_REGION: ${{ inputs.source-region }}
+        DESTINATION_BUCKET: ${{ inputs.destination-bucket }}
+        DESTINATION_PREFIX: ${{ inputs.destination-prefix }}
+        DESTINATION_REGION: ${{ inputs.destination-region }}
+        DESTINATION_ENDPOINT: ${{ inputs.destination-endpoint }}
+        DESTINATION_PROVIDER: ${{ inputs.destination-provider }}
+        DESTINATION_ACCESS_KEY_ID: ${{ inputs.destination-access-key-id }}
+        DESTINATION_SECRET_ACCESS_KEY: ${{ inputs.destination-secret-access-key }}
+        STORAGE_CLASS: ${{ inputs.storage-class }}
+        MAX_DELETE: ${{ inputs.max-delete }}
+        TRANSFERS: ${{ inputs.transfers }}
+        DRY_RUN: ${{ inputs.dry-run }}

@@ -1,0 +1,26 @@
+# Storage buckets mirrored nightly into the offsite backup bucket.
+#
+# Add a bucket: one entry below, plus two repository secrets named after its
+# "secret" value:  <SECRET>_ACCESS_KEY_ID  and  <SECRET>_SECRET_ACCESS_KEY
+# Use a read-only key for each source bucket.
+
+destination:
+  bucket: example-offsite-backups
+  region: ap-south-1
+  # AWS: leave endpoint out. The workflow signs in with GitHub OIDC using the
+  # AWS_ROLE_ARN repository variable; no AWS key is stored here.
+  #
+  # Any other S3-compatible provider: set its endpoint (and provider, as rclone
+  # names it), and store its keys as the DESTINATION_ACCESS_KEY_ID and
+  # DESTINATION_SECRET_ACCESS_KEY secrets:
+  # endpoint: https://blr1.digitaloceanspaces.com
+  # provider: DigitalOcean
+  prefix: files
+  # Defaults to STANDARD_IA on AWS and to none elsewhere.
+  # storage_class: STANDARD_IA
+
+buckets:
+  - name: example_production_private
+    endpoint: https://<account-id>.r2.cloudflarestorage.com
+    secret: EXAMPLE_PRODUCTION_PRIVATE
+    # provider: Cloudflare   # default; rclone's S3 provider name

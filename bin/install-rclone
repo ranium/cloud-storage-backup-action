@@ -1,0 +1,41 @@
+#!/usr/bin/env bash
+#
+# Installs a pinned rclone on the runner and verifies it against a pinned
+# SHA-256 (taken from rclone's signed SHA256SUMS for this release).
+#
+# To upgrade rclone: bump RCLONE_VERSION and both checksums together.
+
+set -euo pipefail
+
+RCLONE_VERSION="v1.75.2"
+SHA256_AMD64="349ac8fba6ff65d6247043f1750cdcb518ec5d500ef91463a10d37c0ccdf3702"
+SHA256_ARM64="7e1e8d69654941b7b7df84ee74c5f7fb09cce7d5496947fb7bf16b55ff427d10"
+
+case "${RUNNER_ARCH:-X64}" in
+    X64) arch=amd64; sha="${SHA256_AMD64}" ;;
+    ARM64) arch=arm64; sha="${SHA256_ARM64}" ;;
+    *) echo "install-rclone: unsupported runner architecture ${RUNNER_ARCH}" >&2; exit 1 ;;
+esac
+
+target="${RUNNER_TEMP:-/tmp}/rclone-${RCLONE_VERSION}"
+
+if [ ! -x "${target}/rclone" ]; then
+    work="$(mktemp -d)"
+    trap 'rm -rf "${work}"' EXIT
+
+    archive="${work}/rclone.zip"
+    curl -fsSL --retry 3 -o "${archive}" \
+        "https://github.com/rclone/rclone/releases/download/${RCLONE_VERSION}/rclone-${RCLONE_VERSION}-linux-${arch}.zip"
+
+    echo "${sha}  ${archive}" | sha256sum --check --status || {
+        echo "install-rclone: checksum mismatch for rclone ${RCLONE_VERSION} (${arch}); refusing to install." >&2
+        exit 1
+    }
+
+    unzip -q "${archive}" -d "${work}"
+    mkdir -p "${target}"
+    install -m 0755 "${work}/rclone-${RCLONE_VERSION}-linux-${arch}/rclone" "${target}/rclone"
+fi
+
+echo "${target}" >>"${GITHUB_PATH}"
+"${target}/rclone" version | head -1
