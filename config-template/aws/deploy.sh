@@ -15,7 +15,7 @@
 
 set -euo pipefail
 
-CLOUD_DB_BACKUP_REF="ab6546c17fe7472f0c1db101e43da816e6782623" # a commit SHA; bump deliberately
+CLOUD_DB_BACKUP_REF="38f3609e011f69c3768e40d8adfc1b2c7a0fa06a" # a commit SHA; bump deliberately
 
 here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 work="$(mktemp -d)"
