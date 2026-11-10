@@ -26,7 +26,8 @@ calls this Action once per bucket, in parallel. Start one from
     └── sync-storage.yml           nightly at 03:00 IST, plus a manual "Run workflow" button
 ```
 
-See [config-template/README.md](config-template/README.md) for the steps.
+To set up a new organization, both database and storage backups, follow
+[config-template/SETUP.md](config-template/SETUP.md) from the top.
 
 ## What a sync does
 

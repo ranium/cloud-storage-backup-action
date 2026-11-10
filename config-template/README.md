@@ -1,5 +1,8 @@
 # Offsite backups: configuration
 
+> Setting this up for a new organization? Follow [SETUP.md](SETUP.md) from the top.
+> What is deployed for this organization is recorded in [deployment.md](deployment.md).
+
 This private repository holds this organization's backup settings. The code
 lives in two public repositories:
 
