@@ -9,6 +9,7 @@
   "retention": {
     "daily_days": 35,
     "monthly_days": 365,
-    "noncurrent_file_version_days": 90
+    "noncurrent_file_version_days": 90,
+    "dump_version_recovery_days": 7
   }
 }

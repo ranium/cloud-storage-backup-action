@@ -81,7 +81,7 @@ Output: `max-delete-reached` is `"true"` when a run stopped at `max-delete`.
     role-to-assume: ${{ vars.AWS_ROLE_ARN }}
     aws-region: ap-south-1
 
-- uses: ranium/cloud-storage-backup-action@v1
+- uses: ranium/cloud-storage-backup-action@b2c7f98cc9df6efa4bd668b354d15d768ac4dc11 # pin a commit
   with:
     source-bucket: laratix_production_private
     source-endpoint: https://<account>.r2.cloudflarestorage.com

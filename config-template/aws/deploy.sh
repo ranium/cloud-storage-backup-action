@@ -15,7 +15,7 @@
 
 set -euo pipefail
 
-CLOUD_DB_BACKUP_REF="main" # pin to a release tag or commit SHA once one exists
+CLOUD_DB_BACKUP_REF="ab6546c17fe7472f0c1db101e43da816e6782623" # a commit SHA; bump deliberately
 
 here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 work="$(mktemp -d)"
