@@ -23,10 +23,18 @@ Allow about an hour. A finished example is Ranium's `deployment.md` in
 
 ## 0. Before you start
 
-**Tools:** the [Laravel Cloud CLI](https://cloud.laravel.com/docs) (`cloud`),
-signed in to the **organization being set up**; the GitHub CLI (`gh`); `jq`;
-`age` (`brew install age`); and, for an AWS destination, the AWS CLI with a
-profile for the AWS account that will hold the backups.
+**Tools.** Install these on the machine you set up from (macOS or Linux), and
+sign each in to the **organization being set up**, not your own:
+
+| Tool | Used for | Install (macOS) | Sign in |
+|---|---|---|---|
+| `bash`, `curl`, `git` | everything | built in | |
+| [Laravel Cloud CLI](https://cloud.laravel.com/docs) (`cloud`) | buckets, clusters, the database apps' variables and secrets | see its docs | `cloud auth`, in the organization's account |
+| GitHub CLI (`gh`) | the config repository, its secrets and workflow runs | `brew install gh` | `gh auth login`, as someone who can set the repository's secrets |
+| `jq` | reading JSON in the commands below and in `aws/deploy.sh` | `brew install jq` | |
+| `age` | the encryption key pair (step 3), and restoring | `brew install age` | |
+| AWS CLI (`aws`) | `aws/deploy.sh` for **every** destination (it also speaks the S3 API to Spaces), and checking the bucket | `brew install awscli` | AWS only: a profile for the account that will hold the backups (`AWS_PROFILE=...`) |
+| `doctl` | DigitalOcean destination only: creating Spaces keys | `brew install doctl` | `doctl auth init --context <org>`, with an API token from the organization's DigitalOcean team that can create, read and delete Spaces keys |
 
 **Decide, and write down in `deployment.md` as you go:**
 
@@ -74,9 +82,21 @@ Edit [`aws/stack.json`](aws/stack.json):
 }
 ```
 
+For **DigitalOcean Spaces**:
+
+```json
+{
+  "provider": "digitalocean",
+  "region": "blr1",
+  "bucket": "<org>-offsite-backups",
+  "doctl_context": "<org>",
+  "github_repository": "<org>/cloud-backups",
+  "retention": { "daily_days": 35, "monthly_days": 365, "noncurrent_file_version_days": 90, "dump_version_recovery_days": 7 }
+}
+```
+
 For another S3-compatible provider use `"provider": "s3-compatible"` with its
-`"endpoint"` (e.g. `https://blr1.digitaloceanspaces.com`) and drop the
-`github_*` and `stack_name` fields.
+`"endpoint"`, and drop the `github_*` and `stack_name` fields.
 
 Then push the repository (the next step's GitHub detection reads it) and
 create the bucket:
@@ -94,6 +114,16 @@ aws/deploy.sh
   repositories use the immutable form `repo:<org>@<id>/cloud-backups@<id>`,
   which it detects through `gh`. At the end it prints the IAM user name and the
   `StorageSyncRoleArn`; keep both.
+- **DigitalOcean:** needs no keys from you: it uses the `doctl` context. It
+  makes a temporary full-access Spaces key, creates the bucket with it, turns
+  versioning on and applies the retention rules, then deletes that key. It
+  also creates the storage sync's key (`<bucket>-storage-sync`, limited to
+  this bucket) and stores it as this repository's `DESTINATION_ACCESS_KEY_ID`
+  and `DESTINATION_SECRET_ACCESS_KEY` secrets. The database apps' key comes in
+  step 5.4. Watch the output for a warning that Spaces rejected the rules for
+  previous versions: without them, replaced and deleted files are kept (and
+  billed) until removed by hand. Spaces keys that can write can also delete;
+  note that in `deployment.md`.
 - **S3-compatible:** first `export AWS_ACCESS_KEY_ID=... AWS_SECRET_ACCESS_KEY=...`
   with the provider's keys. It creates the bucket, turns versioning on and
   applies the retention rules, and says if the provider rejected any. Then, in
@@ -144,8 +174,16 @@ buckets:
     secret: MYAPP_PRODUCTION_PRIVATE
 ```
 
-For an S3-compatible destination, add its `endpoint` and `provider` under
-`destination` (see the comments in the file).
+For DigitalOcean, set `region: blr1` (the Spaces region) and add, under
+`destination`:
+
+```yaml
+  endpoint: https://blr1.digitaloceanspaces.com
+  provider: DigitalOcean
+```
+
+Other S3-compatible providers are the same with their own values (see the
+comments in the file).
 
 ### 4.2 Keys and settings
 
@@ -166,7 +204,8 @@ gh secret set MYAPP_PRODUCTION_PRIVATE_SECRET_ACCESS_KEY -R $R
 # ...two per bucket
 
 gh variable set AWS_ROLE_ARN -R $R --body <StorageSyncRoleArn from step 2>   # AWS
-# or, for an S3-compatible destination:
+# DigitalOcean: nothing; aws/deploy.sh already set DESTINATION_* in step 2.
+# Another S3-compatible destination:
 gh secret set DESTINATION_ACCESS_KEY_ID -R $R
 gh secret set DESTINATION_SECRET_ACCESS_KEY -R $R
 
@@ -187,6 +226,12 @@ relying on it. Then check the bucket:
 ```bash
 aws s3 ls s3://<org>-offsite-backups/files/ --recursive --summarize | tail -2
 ```
+
+Outside AWS, add `--endpoint-url <endpoint>` and use a key that can read the
+bucket. The keys `aws/deploy.sh` made on DigitalOcean are never displayed, so
+there, look in the DigitalOcean console, or make a short-lived read key:
+`doctl spaces keys create check --grants 'bucket=<bucket>;permission=read' -o json`,
+and delete it afterwards with `doctl spaces keys delete <access key>`.
 
 The schedule is in [`.github/workflows/sync-storage.yml`](.github/workflows/sync-storage.yml)
 (`cron`, UTC).
@@ -250,8 +295,16 @@ add BACKUP_CLUSTER_MY_CLUSTER_USERNAME "$(cloud database-cluster:get <cluster-id
 ```
 
 For an S3-compatible destination also add `BACKUP_S3_ENDPOINT`, and an empty
-`BACKUP_S3_STORAGE_CLASS` for providers without storage classes. Every option
-is in cloud-db-backup's README.
+`BACKUP_S3_STORAGE_CLASS` for providers without storage classes. On
+DigitalOcean that is:
+
+```bash
+add BACKUP_S3_REGION   blr1
+add BACKUP_S3_ENDPOINT https://blr1.digitaloceanspaces.com
+add BACKUP_S3_STORAGE_CLASS ""         # empty; if the CLI refuses an empty value, set it in the dashboard
+```
+
+Every option is in cloud-db-backup's README.
 
 ### 5.4 Secrets
 
@@ -269,7 +322,11 @@ aws iam create-access-key --user-name <DatabaseUploader user from step 2> --outp
 jq -j .AccessKey.AccessKeyId /tmp/k.json | cloud secret:create --name BACKUP_S3_KEY --json
 jq -j .AccessKey.SecretAccessKey /tmp/k.json | cloud secret:create --name BACKUP_S3_SECRET --json
 rm -P /tmp/k.json
-# (S3-compatible: pipe in the database-app key from step 2 instead.)
+# DigitalOcean: instead of the four lines above, from this repository
+#   aws/deploy.sh --db-key "$E"
+# creates the Spaces key (once), stores it as BACKUP_S3_KEY / BACKUP_S3_SECRET
+# and attaches both to the environment. Run it for every app.
+# Another S3-compatible provider: pipe in the database-app key from step 2.
 
 cloud secret:list                                    # ids
 cloud environment-secret:attach "$E" <password-secret-id> <s3-key-id> <s3-secret-id>
@@ -290,8 +347,8 @@ php artisan backup:databases --dry-run    # connects and lists the databases
 php artisan backup:databases              # a real run now
 ```
 
-Then check the run's manifest: it lists every database with its size and
-SHA-256, and `"successful": true`:
+Then check the run's manifest (outside AWS, add `--endpoint-url`): it lists
+every database with its size and SHA-256, and `"successful": true`:
 
 ```bash
 aws s3 ls s3://<org>-offsite-backups/db/manifests/<org>-us-east-2/ --recursive | tail -1
@@ -340,3 +397,10 @@ backups are and how they run.
   bucket in place.
 - **Updating the code:** both the workflow and `aws/deploy.sh` pin commit SHAs;
   bump them deliberately. The database apps deploy `main` of cloud-db-backup.
+- **DigitalOcean: "exists but ... lacks its secrets".** A Spaces key's secret
+  cannot be read back after it is created, so if a key exists but its secrets
+  were never stored (or were deleted), `aws/deploy.sh` stops and prints the
+  `doctl spaces keys delete` command; run it, then run `aws/deploy.sh` again.
+- **DigitalOcean: `doctl` 403 errors.** The API token lacks a Spaces key scope,
+  or belongs to another team. Make a token in the organization's team with
+  create, read and delete on Spaces keys.

@@ -27,7 +27,11 @@ calls this Action once per bucket, in parallel. Start one from
 ```
 
 To set up a new organization, both database and storage backups, follow
-[config-template/SETUP.md](config-template/SETUP.md) from the top.
+[config-template/SETUP.md](config-template/SETUP.md) from the top. Its first
+section lists the tools the setup needs (the Laravel Cloud CLI, `gh`, `jq`,
+`age`, the AWS CLI, and `doctl` for a DigitalOcean Spaces destination). The
+Action itself needs nothing installed: it runs on GitHub's Linux runners and
+fetches its own rclone.
 
 ## What a sync does
 
@@ -99,6 +103,14 @@ bucket. The latest version of every file is what a plain copy returns:
 
 ```bash
 rclone copy :s3,provider=AWS,env_auth=true,region=ap-south-1:ranium-offsite-backups/files/laratix_production_private ./restore
+```
+
+From DigitalOcean Spaces (or another S3-compatible provider), name the
+provider and endpoint instead, with a key that can read the bucket in
+`AWS_ACCESS_KEY_ID` / `AWS_SECRET_ACCESS_KEY`:
+
+```bash
+rclone copy :s3,provider=DigitalOcean,env_auth=true,endpoint=https://blr1.digitaloceanspaces.com:client-offsite-backups/files/myapp_production_private ./restore
 ```
 
 A file deleted or overwritten in the source is still in the mirror as a

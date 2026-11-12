@@ -2,20 +2,26 @@
 #
 # Creates or updates this organization's backup bucket from aws/stack.json.
 #
-#   aws/deploy.sh --plan     show what would change
-#   aws/deploy.sh            apply it
+#   aws/deploy.sh --plan                    show what would change
+#   aws/deploy.sh                           apply it
+#   aws/deploy.sh --db-key <environment>    DigitalOcean: give a cloud-db-backup
+#                                           environment the database key
 #
 # The bucket logic lives in ranium/cloud-db-backup (aws/setup-bucket and the
 # CloudFormation template). It is fetched at the pinned ref below, so this
 # repository only holds this organization's values. Bump the ref deliberately.
 #
 # AWS: uses your AWS CLI profile (AWS_PROFILE).
+# DigitalOcean: uses doctl (the context in doctl_context), gh and, for
+# --db-key, the Laravel Cloud CLI; no keys to set.
 # S3-compatible: set AWS_ACCESS_KEY_ID / AWS_SECRET_ACCESS_KEY to the
 # provider's keys first.
+#
+# Needs bash, curl, jq and the AWS CLI; see SETUP.md for the full list.
 
 set -euo pipefail
 
-CLOUD_DB_BACKUP_REF="38f3609e011f69c3768e40d8adfc1b2c7a0fa06a" # a commit SHA; bump deliberately
+CLOUD_DB_BACKUP_REF="89ab12036f82e7139baad94d49f09305124b4064" # a commit SHA; bump deliberately
 
 here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 work="$(mktemp -d)"
