@@ -21,6 +21,8 @@ never by value. Last updated: <date>.
   - Database apps: <IAM user / provider key name>, key ending `…<last 4>`, stored in Laravel
     Cloud as `BACKUP_S3_KEY` / `BACKUP_S3_SECRET`.
   - Storage sync: <role ARN in `AWS_ROLE_ARN`, or provider key in `DESTINATION_*` secrets>.
+  - DigitalOcean: Spaces keys `<bucket>-storage-sync` and `<bucket>-db-backup`, readwrite on
+    this bucket only (which includes delete); team `<team>`, doctl context `<context>`.
 
 ## Storage sync
 

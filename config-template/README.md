@@ -20,11 +20,12 @@ Edit [`aws/stack.json`](aws/stack.json):
 
 | Field | |
 |---|---|
-| `provider` | `aws`, or `s3-compatible` for DigitalOcean Spaces, Backblaze B2, MinIO, ... |
+| `provider` | `aws`, `digitalocean`, or `s3-compatible` for Backblaze B2, MinIO, ... |
 | `region`, `bucket` | Where backups go. |
-| `endpoint` | `s3-compatible` only. |
+| `endpoint` | `s3-compatible`: required. `digitalocean`: defaults to `https://<region>.digitaloceanspaces.com`. |
+| `doctl_context` | `digitalocean` only: the `doctl auth` context for the right team. |
 | `retention` | Days to keep daily dumps (35), monthly dumps (365) and previous file versions (90). |
-| `github_repository` | `aws` only: this repository, as `owner/repo`. |
+| `github_repository` | This repository, as `owner/repo`. `aws`: the repository the sync role trusts. `digitalocean`: where the storage sync's key is stored. |
 
 Then:
 
@@ -36,7 +37,13 @@ aws/deploy.sh          # apply
 It prints the next steps. On AWS that is: create the database uploader's
 access key, and set the printed `StorageSyncRoleArn` as this repository's
 `AWS_ROLE_ARN` **variable** (Settings → Secrets and variables → Actions →
-Variables). Re-run it whenever you change `stack.json`.
+Variables). On DigitalOcean it has already stored the storage sync's key in
+this repository; once a database app exists, `aws/deploy.sh --db-key <environment id>`
+gives it its key. Re-run it whenever you change `stack.json`.
+
+Tools it needs: `bash`, `curl`, `jq` and the AWS CLI; for DigitalOcean also
+`doctl` and `gh`, and the Laravel Cloud CLI (`cloud`) for `--db-key`. The full
+list, with how to sign each in, is in [SETUP.md](SETUP.md#0-before-you-start).
 
 ## 2. Storage buckets
 
@@ -51,8 +58,9 @@ name is its `fls-...` id, not the label shown in the dashboard: take it from
 <SECRET>_SECRET_ACCESS_KEY
 ```
 
-For a destination that is not AWS, also add `DESTINATION_ACCESS_KEY_ID` and
-`DESTINATION_SECRET_ACCESS_KEY`.
+For a destination that is not AWS, `DESTINATION_ACCESS_KEY_ID` and
+`DESTINATION_SECRET_ACCESS_KEY` hold its key: on DigitalOcean `aws/deploy.sh`
+sets them, elsewhere add them yourself.
 
 Optional: a `HEALTHCHECK_URL` secret (a healthchecks.io ping URL) gets a ping
 after every nightly run, or a failure ping if any bucket failed. Without it,

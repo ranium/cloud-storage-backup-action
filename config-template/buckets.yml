@@ -10,11 +10,14 @@ destination:
   # AWS: leave endpoint out. The workflow signs in with GitHub OIDC using the
   # AWS_ROLE_ARN repository variable; no AWS key is stored here.
   #
-  # Any other S3-compatible provider: set its endpoint (and provider, as rclone
-  # names it), and store its keys as the DESTINATION_ACCESS_KEY_ID and
-  # DESTINATION_SECRET_ACCESS_KEY secrets:
+  # DigitalOcean Spaces: set the endpoint and provider below. aws/deploy.sh
+  # stores the key as the DESTINATION_ACCESS_KEY_ID and
+  # DESTINATION_SECRET_ACCESS_KEY secrets. Use the Spaces region (blr1) above.
   # endpoint: https://blr1.digitaloceanspaces.com
   # provider: DigitalOcean
+  #
+  # Any other S3-compatible provider: the same, with its endpoint and its
+  # rclone provider name; store its keys in those two secrets yourself.
   prefix: files
   # Defaults to STANDARD_IA on AWS and to none elsewhere.
   # storage_class: STANDARD_IA
