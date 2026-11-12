@@ -107,10 +107,11 @@ rclone copy :s3,provider=AWS,env_auth=true,region=ap-south-1:ranium-offsite-back
 
 From DigitalOcean Spaces (or another S3-compatible provider), name the
 provider and endpoint instead, with a key that can read the bucket in
-`AWS_ACCESS_KEY_ID` / `AWS_SECRET_ACCESS_KEY`:
+`AWS_ACCESS_KEY_ID` / `AWS_SECRET_ACCESS_KEY`. The endpoint is quoted because it
+contains a `:`:
 
 ```bash
-rclone copy :s3,provider=DigitalOcean,env_auth=true,endpoint=https://blr1.digitaloceanspaces.com:client-offsite-backups/files/myapp_production_private ./restore
+rclone copy ':s3,provider=DigitalOcean,env_auth=true,endpoint="https://blr1.digitaloceanspaces.com":client-offsite-backups/files/myapp_production_private' ./restore
 ```
 
 A file deleted or overwritten in the source is still in the mirror as a

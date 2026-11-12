@@ -330,6 +330,7 @@ rm -P /tmp/k.json
 
 cloud secret:list                                    # ids
 cloud environment-secret:attach "$E" <password-secret-id> <s3-key-id> <s3-secret-id>
+# (DigitalOcean: only <password-secret-id>; --db-key attached the other two.)
 cloud environment-secret:list "$E"                   # check
 ```
 
