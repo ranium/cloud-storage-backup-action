@@ -43,4 +43,6 @@ if [ ! -x "${target}/rclone" ]; then
 fi
 
 echo "${target}" >>"${GITHUB_PATH}"
-"${target}/rclone" version | head -1
+# Capture first: piping into `head` can SIGPIPE rclone, and pipefail turns that into exit 141.
+version_output="$("${target}/rclone" version)"
+echo "${version_output%%$'\n'*}"
